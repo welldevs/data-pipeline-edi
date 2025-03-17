@@ -10,10 +10,14 @@ from contextlib import closing
 # CONFIGURAÇÕES DE CONEXÃO
 # ==============================================================================
 DB_CONN = {
-    "dbname": "airflow",
-    "user": "airflow",
-    "password": "airflow",
-    "host": "airflow-postgres-1",
+    #"dbname": "airflow",
+    #"user": "airflow",
+    #"password": "airflow",
+    #"host": "airflow-postgres-1",  # Nome do serviço no docker-compose do Airflow
+    'dbname': 'mydatabase',
+    'user':'user',
+    'password': 'password',
+    'host': 'postgres_db',
     "port": "5432"
 }
 

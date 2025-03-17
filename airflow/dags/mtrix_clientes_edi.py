@@ -41,15 +41,15 @@ DF_COLUMNS = [
 DIRECTORY = "/opt/airflow/data/arquivos_mtrix"
 
 DB_CONN = {
-    "dbname": "airflow",
-    "user": "airflow",
-    "password": "airflow",
-    "host": "airflow-postgres-1",  # Nome do serviço no docker-compose do Airflow
-    "port": "5432"
+    "dbname": "mydatabase",
+    "user":"user",
+    "password":"password",
+    "host":"postgres_db",
+    "port":"5432"
 }
 
 CREATE_TABLE_QUERY = """
-CREATE TABLE IF NOT EXISTS public.clientes_mtrix (
+CREATE TABLE IF NOT EXISTS public.mtrix_clientes (
     id SERIAL PRIMARY KEY,
     tipo_registro CHAR(1),
     cnpj_distribuidor VARCHAR(14),
@@ -75,13 +75,13 @@ CREATE TABLE IF NOT EXISTS public.clientes_mtrix (
 
 CHECK_FILE_PROCESSED_QUERY = """
 SELECT 1
-FROM public.clientes_mtrix
+FROM public.mtrix_clientes
 WHERE nome_arquivo = %s
 LIMIT 1;
 """
 
 INSERT_QUERY = """
-INSERT INTO public.clientes_mtrix (
+INSERT INTO public.mtrix_clientes (
     tipo_registro,
     cnpj_distribuidor,
     id_cliente,
