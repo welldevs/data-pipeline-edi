@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import os
 import pandas as pd
 import psycopg2
+import chardet
 from contextlib import closing
 from datetime import datetime
 
@@ -105,6 +106,7 @@ INSERT INTO public.mtrix_clientes (
 )
 """
 
+
 def extract_timestamp_from_filename(filename: str):
     """Exemplo de função para extrair data/hora do arquivo."""
     date_str = filename[10:18]  # '12032025'
@@ -149,11 +151,12 @@ def ingest_clientes():
 
                 dtageracaoarquivo = extract_timestamp_from_filename(fname)
 
+
                 df = pd.read_fwf(
                     full_path,
                     colspecs=COLSPECS,
                     header=None,
-                    encoding='utf-8'
+                    encoding='latin-1'
                 )
                 df.columns = DF_COLUMNS
 
