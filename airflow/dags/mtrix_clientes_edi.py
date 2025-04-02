@@ -156,7 +156,8 @@ def ingest_clientes():
                     full_path,
                     colspecs=COLSPECS,
                     header=None,
-                    encoding='latin-1'
+                    encoding='latin-1',
+                    dtype=str
                 )
                 df.columns = DF_COLUMNS
 
