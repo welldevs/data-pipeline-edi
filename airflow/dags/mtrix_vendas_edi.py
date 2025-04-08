@@ -7,37 +7,38 @@ import psycopg2
 from contextlib import closing
 
 # ==============================================================================
-# CONFIGURAÇÕES DE CONEXÃO
+# DATABASE CONNECTION CONFIGURATION
 # ==============================================================================
 DB_CONN = {
-    #"dbname": "airflow",
-    #"user": "airflow",
-    #"password": "airflow",
-    #"host": "airflow-postgres-1",  # Nome do serviço no docker-compose do Airflow
+    # "dbname": "airflow",
+    # "user": "airflow",
+    # "password": "airflow",
+    # "host": "airflow-postgres-1",  # Name of the service in Airflow's docker-compose
     'dbname': 'mydatabase',
-    'user':'user',
+    'user': 'user',
     'password': 'password',
     'host': 'postgres_db',
     "port": "5432"
 }
 
-# Diretório onde estão os arquivos
+# Directory where the files are located
 DIRECTORY = "/opt/airflow/data/arquivos_mtrix"
 
 # ==============================================================================
-# DEFINIÇÃO DOS CAMPOS
+# FIXED-WIDTH FILE COLUMN SPECIFICATIONS
+# (start and end positions for each field)
 # ==============================================================================
 COL_SPECS = [
-    (0, 1),     # tipo_registro
-    (1, 15),    # cnpj_agente_distribuicao
-    (15, 33),   # identificacao_cliente
-    (33, 41),   # data_transacao
-    (41, 61),   # numero_documento
-    (61, 75),   # codigo_produto
-    (75, 95),   # quantidade
-    (95, 111),  # preco_venda
-    (133, 134), # tipo_documento
-    (134, 144)  # cep_cliente
+    (0, 1),     # record type
+    (1, 15),    # distribution agent CNPJ (tax id)
+    (15, 33),   # client identification
+    (33, 41),   # transaction date
+    (41, 61),   # document number
+    (61, 75),   # product code
+    (75, 95),   # quantity
+    (95, 111),  # sale price
+    (133, 134), # document type
+    (134, 144)  # client zip code
 ]
 COL_NAMES = [
     "tipo_registro",
@@ -53,7 +54,7 @@ COL_NAMES = [
 ]
 
 # ==============================================================================
-# CRIAÇÃO DA TABELA
+# SQL QUERY TO CREATE THE TABLE (IF IT DOES NOT EXIST)
 # ==============================================================================
 CREATE_TABLE_QUERY = """
 CREATE TABLE IF NOT EXISTS mtrix_vendas (
@@ -74,7 +75,7 @@ CREATE TABLE IF NOT EXISTS mtrix_vendas (
 """
 
 # ==============================================================================
-# CONSULTA QUE VERIFICA SE O ARQUIVO FOI PROCESSADO
+# SQL QUERY TO CHECK IF THE FILE HAS ALREADY BEEN PROCESSED
 # ==============================================================================
 CHECK_FILE_PROCESSED_QUERY = """
 SELECT 1
@@ -84,7 +85,7 @@ LIMIT 1;
 """
 
 # ==============================================================================
-# INSERT DOS DADOS
+# SQL QUERY TO INSERT DATA INTO THE TABLE
 # ==============================================================================
 INSERT_SQL = """
 INSERT INTO mtrix_vendas (
@@ -107,39 +108,45 @@ VALUES (
 """
 
 def process_txt_to_postgres():
-    # Lista os arquivos "VENDAS*.txt"
+    """
+    Process all files in the specified DIRECTORY that start with "VENDAS" and end with ".txt".
+    
+    For each file:
+     - Check if it has already been processed.
+     - Read the fixed-width file while skipping the header line.
+     - Clean, parse, and convert data (dates, numeric values).
+     - If the file is empty after skipping the header (i.e., only the header is present),
+       insert a record with all nulls (except the file name and inclusion date) to mark it as processed.
+     - Insert valid rows into the PostgreSQL table.
+    """
+    # List all VENDAS*.txt files in the directory
     txt_files = [
         f for f in os.listdir(DIRECTORY)
         if f.startswith("VENDAS") and f.endswith(".txt")
     ]
     if not txt_files:
-        print(f"Nenhum arquivo VENDAS*.txt encontrado em: {DIRECTORY}")
+        print(f"No VENDAS*.txt files found in: {DIRECTORY}")
         return
 
     with closing(psycopg2.connect(**DB_CONN)) as conn:
         with conn.cursor() as cur:
-            # Cria tabela se não existir
+            # Create the table if it does not exist
             cur.execute(CREATE_TABLE_QUERY)
             conn.commit()
 
             for file_name in txt_files:
-                # Antes de processar cada arquivo, checa se já foi processado
+                # Check if the file has already been processed
                 cur.execute(CHECK_FILE_PROCESSED_QUERY, (file_name,))
                 already_processed = cur.fetchone()
 
                 if already_processed:
-                    print(f"Arquivo {file_name} já foi processado. Pulando.")
+                    print(f"File {file_name} has already been processed. Skipping.")
                     continue
 
                 full_path = os.path.join(DIRECTORY, file_name)
-                print(f"Processando arquivo: {full_path}")
+                print(f"Processing file: {full_path}")
 
-                # Exemplo: VENDASUN12032025140133.txt => se quiser extrair data:
-                # file_name_no_ext = file_name.replace(".txt", "")
-                # date_str = file_name_no_ext[8:]  # "12032025140133"
-                # dt_arquivo = datetime.strptime(date_str, "%d%m%Y%H%M%S")
-
-                # Lê ignorando cabeçalho "H"
+                # Read the fixed-width file while skipping the header line ("H")
                 df = pd.read_fwf(
                     full_path,
                     colspecs=COL_SPECS,
@@ -148,10 +155,22 @@ def process_txt_to_postgres():
                     skiprows=1
                 )
 
-                # Remove espaços extras
-                df = df.apply(lambda c: c.str.strip() if c.dtype == "object" else c)
+                # Remove extra spaces from string columns
+                df = df.apply(lambda col: col.str.strip() if col.dtype == "object" else col)
 
-                # Converte data, quantidade, preco
+                # If the DataFrame is empty (file contains only a header), mark the file as processed
+                if df.empty:
+                    cur.execute(INSERT_SQL, (
+                        None, None, None, None, None, None,
+                        None, None, None, None,
+                        file_name,
+                        datetime.now()
+                    ))
+                    conn.commit()
+                    print(f"⚠️ File {file_name} contains no valid data. Marked as processed.")
+                    continue
+
+                # Convert fields: transaction date, quantity, and sale price
                 df["data_transacao"] = pd.to_datetime(df["data_transacao"], format='%Y%m%d', errors='coerce')
                 df["quantidade"] = pd.to_numeric(df["quantidade"], errors='coerce')
                 df["preco_venda"] = (
@@ -160,23 +179,20 @@ def process_txt_to_postgres():
                     .astype(float, errors="ignore")
                 )
 
-                # Trata NaT especificamente no campo de data_transacao
+                # Replace invalid dates (NaT) with None
                 df['data_transacao'] = df['data_transacao'].apply(lambda x: x if pd.notnull(x) else None)
-
-                # Substitui NaN em outros campos numéricos
+                # Replace NaN with None in numeric fields
                 df["quantidade"] = df["quantidade"].where(pd.notnull(df["quantidade"]), None)
                 df["preco_venda"] = df["preco_venda"].where(pd.notnull(df["preco_venda"]), None)
 
-                # Outros campos textuais, caso também possam conter NaN
+                # Replace NaN with None for text fields (if any)
                 for col in ["tipo_registro", "cnpj_agente_distribuicao", "identificacao_cliente",
                             "numero_documento", "codigo_produto", "tipo_documento", "cep_cliente"]:
                     df[col] = df[col].where(pd.notnull(df[col]), None)
 
-
-                # Para cada linha do DataFrame, faz INSERT
+                # Insert each record into the PostgreSQL table
                 for _, row in df.iterrows():
                     data_inclusao = datetime.now()
-
                     record = (
                         row["tipo_registro"],
                         row["cnpj_agente_distribuicao"],
@@ -188,16 +204,16 @@ def process_txt_to_postgres():
                         row["preco_venda"],
                         row["tipo_documento"],
                         row["cep_cliente"],
-                        file_name,      # nome do arquivo
-                        data_inclusao,  # data_inclusao
+                        file_name,      # file name
+                        data_inclusao,  # inclusion date
                     )
                     cur.execute(INSERT_SQL, record)
 
                 conn.commit()
-                print(f"✅ Inseridos {len(df)} registros de {file_name}!")
+                print(f"✅ Inserted {len(df)} records from {file_name}!")
 
 # ==============================================================================
-# DEFINIÇÃO DA DAG
+# DAG DEFINITION
 # ==============================================================================
 default_args = {
     "owner": "user",
