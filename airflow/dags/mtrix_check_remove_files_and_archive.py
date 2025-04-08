@@ -1,9 +1,9 @@
+import os
+import psycopg2
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime
-import os
-import psycopg2
-from contextlib import closing  # Certifique-se de que isso está importado
+from contextlib import closing
 
 # Database configuration
 DB_CONN = {
@@ -17,13 +17,6 @@ DB_CONN = {
 # Directory where the files are located
 DIRECTORY = "/opt/airflow/data/arquivos_mtrix"
 
-# Mapping file prefixes to their respective tables
-TABLE_MAPPING = {
-    "VENDASUN": "public.mtrix_vendas",
-    "CLIENTESUN": "public.mtrix_clientes",
-    "PRODUTOSUN": "public.mtrix_produtos"
-}
-
 # Archive table creation query
 CREATE_ARCHIVE_TABLE_QUERY = """
 CREATE TABLE IF NOT EXISTS mtrix_vendas_archive (
@@ -36,41 +29,22 @@ CREATE TABLE IF NOT EXISTS mtrix_vendas_archive (
 
 # Function to connect to the database
 def connect_to_database():
-    """ Opens a connection to the database """
+    """Opens a connection to the database."""
     return psycopg2.connect(**DB_CONN)
 
-# Function to get the table name based on file prefix
-def get_table_name(file_name):
-    """ Determines the table based on file prefix """
-    for prefix, table in TABLE_MAPPING.items():
-        if file_name.startswith(prefix):
-            return table
-    return None  # Return None if no matching table is found
-
-# Function to check if a file has already been processed
-def is_file_processed(file_name):
-    """ Checks if the file has already been processed in the correct table """
-    table_name = get_table_name(file_name)
-    if table_name is None:
-        print(f"⚠️ No table found for file: {file_name}")
-        return False  # If no valid table, assume it has not been processed
-
-    query = f"SELECT 1 FROM {table_name} WHERE nome_arquivo = %s LIMIT 1;"
-    
-    conn = connect_to_database()
-    cursor = conn.cursor()
-    cursor.execute(query, (file_name,))
-    result = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    
-    return result is not None  # Returns True if the file has already been processed
-
-# Function to archive processed files
+# Function to archive a single processed file
 def archive_processed_file(file_name):
-    """ Archives the processed file's metadata and content into the archive table """
+    """Archives the processed file's metadata and content into the archive table."""
     full_path = os.path.join(DIRECTORY, file_name)
     print(f"Archiving file: {full_path}")
+
+    # Open and read the file content
+    try:
+        with open(full_path, 'r') as file:
+            file_content = file.read()
+    except Exception as e:
+        print(f"Failed to read file {file_name}: {e}")
+        return
 
     # Check if the file has already been archived
     with closing(psycopg2.connect(**DB_CONN)) as conn:
@@ -78,11 +52,10 @@ def archive_processed_file(file_name):
             cur.execute(f"SELECT 1 FROM mtrix_vendas_archive WHERE file_name = %s LIMIT 1;", (file_name,))
             if cur.fetchone():
                 print(f"File {file_name} is already archived. Skipping.")
-                return
+                return  # Skip if file is already archived
 
+            # Insert the file into the archive table
             try:
-                with open(full_path, 'r') as file:
-                    file_content = file.read()
                 cur.execute("""
                     INSERT INTO mtrix_vendas_archive (file_name, inclusion_date, file_content)
                     VALUES (%s, %s, %s);
@@ -92,9 +65,9 @@ def archive_processed_file(file_name):
             except Exception as e:
                 print(f"Failed to archive {file_name}: {e}")
 
-# Function to check and remove files
+# Function to check and remove files that have been processed
 def check_and_remove_files():
-    """ Checks files in the directory and removes those that have been processed """
+    """Checks files in the directory and removes those that have been processed."""
     for file in os.listdir(DIRECTORY):
         file_path = os.path.join(DIRECTORY, file)
 
@@ -104,6 +77,15 @@ def check_and_remove_files():
                 print(f"🗑️ File removed: {file}")
             else:
                 print(f"✅ File not yet processed: {file}")
+
+# Function to check if a file has been processed and archived
+def is_file_processed(file_name):
+    """Checks if the file has already been archived in the archive table."""
+    with closing(psycopg2.connect(**DB_CONN)) as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT 1 FROM mtrix_vendas_archive WHERE file_name = %s LIMIT 1;", (file_name,))
+            result = cur.fetchone()
+            return result is not None  # Returns True if the file is archived
 
 # Define Airflow DAG
 default_args = {
@@ -119,7 +101,7 @@ with DAG(
     tags=["file_cleanup", "postgres", "archive"]
 ) as dag:
 
-    # Task to create archive table
+    # Task to create the archive table if it does not exist
     def create_archive_table():
         """Create the archive table if it doesn't exist."""
         with closing(psycopg2.connect(**DB_CONN)) as conn:
@@ -128,13 +110,13 @@ with DAG(
                 conn.commit()
         print("Archive table created (if not exists).")
 
-    # Task to archive files that were processed
+    # Task to archive processed files (one file at a time)
     def archive_processed_files():
         """Archives all processed files in the directory."""
         files_to_archive = os.listdir(DIRECTORY)
         for file_name in files_to_archive:
             if file_name.startswith("VENDAS") or file_name.startswith("CLIENTES") or file_name.startswith("PRODUTOS"):
-                if not is_file_processed(file_name):
+                if not is_file_processed(file_name):  # Check if file is already archived
                     archive_processed_file(file_name)
 
     # Task to remove processed files from the directory
