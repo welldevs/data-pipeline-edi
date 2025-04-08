@@ -1,8 +1,9 @@
-import os
-import psycopg2
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime
+import os
+import psycopg2
+from contextlib import closing  # Certifique-se de que isso está importado
 
 # Database configuration
 DB_CONN = {
