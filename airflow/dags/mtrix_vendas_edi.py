@@ -160,8 +160,18 @@ def process_txt_to_postgres():
                     .astype(float, errors="ignore")
                 )
 
-                # Substituir NaN/NaT para None
-                df = df.where(pd.notnull(df), None)
+                # Trata NaT especificamente no campo de data_transacao
+                df['data_transacao'] = df['data_transacao'].apply(lambda x: x if pd.notnull(x) else None)
+
+                # Substitui NaN em outros campos numéricos
+                df["quantidade"] = df["quantidade"].where(pd.notnull(df["quantidade"]), None)
+                df["preco_venda"] = df["preco_venda"].where(pd.notnull(df["preco_venda"]), None)
+
+                # Outros campos textuais, caso também possam conter NaN
+                for col in ["tipo_registro", "cnpj_agente_distribuicao", "identificacao_cliente",
+                            "numero_documento", "codigo_produto", "tipo_documento", "cep_cliente"]:
+                    df[col] = df[col].where(pd.notnull(df[col]), None)
+
 
                 # Para cada linha do DataFrame, faz INSERT
                 for _, row in df.iterrows():
